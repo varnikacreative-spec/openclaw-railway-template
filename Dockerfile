@@ -11,6 +11,8 @@ RUN apt-get update \
     build-essential \
     zip \
     tini \
+    jq \
+    ripgrep \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g openclaw@latest clawhub@latest
