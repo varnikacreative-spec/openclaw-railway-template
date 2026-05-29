@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const ODIN_MARKER = "<!-- ODIN-BOOTSTRAP:v3 -->";
+const ODIN_MARKER = "<!-- ODIN-BOOTSTRAP:v4 -->";
 const ODIN_MARKER_RE = /<!-- ODIN-BOOTSTRAP:v\d+ -->/g;
 
 const CORE_FILES = [
@@ -176,11 +176,11 @@ Obsidian vault at:
 
 Primary:
 
-- anthropic/claude-opus-4.7
+- anthropic/claude-opus-4-7
 
 Fallbacks:
 
-- anthropic/claude-sonnet-4.6
+- anthropic/claude-sonnet-4-6
 - openai/gpt-5.5
 - openai/gpt-5.4
 - openai/gpt-5.4-mini
@@ -329,7 +329,7 @@ This is Odin's top-level persistent memory index. It is intentionally human-read
 - Odin's durable Obsidian vault path is /data/workspace.
 - Telegram is the first active channel for Odin.
 - Slack support is deferred until Andrew chooses to finish it.
-- Odin's default model is anthropic/claude-opus-4.7, with Sonnet 4.6 and GPT-5.x fallbacks.
+- Odin's default model is anthropic/claude-opus-4-7, with Sonnet 4.6 and GPT-5.x fallbacks.
 - The first safe recall test is the canary in memory/CANARY.md.
 
 ## Canary
@@ -681,11 +681,11 @@ const DEFAULT_MODEL_PLAN = `## Default Model Plan
 
 Primary:
 
-- anthropic/claude-opus-4.7
+- anthropic/claude-opus-4-7
 
 Fallbacks:
 
-- anthropic/claude-sonnet-4.6
+- anthropic/claude-sonnet-4-6
 - openai/gpt-5.5
 - openai/gpt-5.4
 - openai/gpt-5.4-mini
@@ -694,13 +694,15 @@ Fallbacks:
 const USER_DEFAULT_MODEL_LINE =
   "- Uses Claude Opus 4.7 as the default model with Sonnet 4.6, GPT-5.5, GPT-5.4, and GPT-5.4 mini fallbacks.";
 const MEMORY_DEFAULT_MODEL_LINE =
-  "- Odin's default model is anthropic/claude-opus-4.7, with Sonnet 4.6 and GPT-5.x fallbacks.";
+  "- Odin's default model is anthropic/claude-opus-4-7, with Sonnet 4.6 and GPT-5.x fallbacks.";
 const DAILY_DEFAULT_MODEL_LINE =
   "- Claude Opus 4.7 is the required default model, with Sonnet and OpenAI fallbacks.";
 
 function normalizeOdinBootstrap(file, text) {
   let next = text.replace(ODIN_MARKER_RE, ODIN_MARKER);
   next = next
+    .replaceAll("anthropic/claude-opus-4.7", "anthropic/claude-opus-4-7")
+    .replaceAll("anthropic/claude-sonnet-4.6", "anthropic/claude-sonnet-4-6")
     .replaceAll(
       "- Uses ChatGPT 5.4 mini as the default model.",
       USER_DEFAULT_MODEL_LINE,

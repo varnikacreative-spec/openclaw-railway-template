@@ -700,7 +700,7 @@ async function configureOdinDefaults({ payload } = {}) {
     ],
     memoryFlush: {
       enabled: true,
-      model: "anthropic/claude-sonnet-4.6",
+      model: "anthropic/claude-sonnet-4-6",
       softThresholdTokens: 40000,
       forceFlushTranscriptBytes: "2mb",
       systemPrompt: [
@@ -715,9 +715,9 @@ async function configureOdinDefaults({ payload } = {}) {
     maxActiveTranscriptBytes: "20mb",
   }, { json: true });
   await setConfig("agents.defaults.model", {
-    primary: "anthropic/claude-opus-4.7",
+    primary: "anthropic/claude-opus-4-7",
     fallbacks: [
-      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-4-6",
       "openai/gpt-5.5",
       "openai/gpt-5.4",
       "openai/gpt-5.4-mini",
@@ -727,8 +727,8 @@ async function configureOdinDefaults({ payload } = {}) {
     "openai/gpt-5.4-mini": {},
     "openai/gpt-5.4": {},
     "openai/gpt-5.5": {},
-    "anthropic/claude-sonnet-4.6": {},
-    "anthropic/claude-opus-4.7": {},
+    "anthropic/claude-sonnet-4-6": {},
+    "anthropic/claude-opus-4-7": {},
   }, { json: true });
   await setConfig("models.providers.openai", {
     apiKey: envSecret("OPENAI_API_KEY"),
@@ -986,6 +986,18 @@ app.get("/setup/api/workspace", requireSetupAuth, async (_req, res) => {
       workspaceDir: WORKSPACE_DIR,
       error: err.message,
     });
+  }
+});
+
+app.post("/setup/api/odin/apply-defaults", requireSetupAuth, async (req, res) => {
+  try {
+    const bootstrap = bootstrapOdinWorkspace();
+    const output = await configureOdinDefaults({ payload: req.body || {} });
+    await restartGateway();
+    return res.json({ ok: true, bootstrap, output });
+  } catch (err) {
+    log.error("odin", `apply defaults failed: ${err.message}`);
+    return res.status(500).json({ ok: false, error: err.message });
   }
 });
 
