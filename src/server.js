@@ -139,6 +139,10 @@ function secretRef(provider, id) {
   return { source: "env", provider, id };
 }
 
+function envSecret(id) {
+  return `$${id}`;
+}
+
 function redactSensitiveOutput(value, extraSecrets = []) {
   let output = String(value ?? "");
   const secrets = [
@@ -727,11 +731,11 @@ async function configureOdinDefaults({ payload } = {}) {
     "anthropic/claude-opus-4.7": {},
   }, { json: true });
   await setConfig("models.providers.openai", {
-    apiKey: secretRef("openai", "OPENAI_API_KEY"),
+    apiKey: envSecret("OPENAI_API_KEY"),
   }, { json: true });
   await setConfig("models.providers.anthropic", {
     api: "anthropic-messages",
-    apiKey: secretRef("anthropic", "ANTHROPIC_API_KEY"),
+    apiKey: envSecret("ANTHROPIC_API_KEY"),
   }, { json: true });
   await setConfig("memory.backend", "builtin");
   await setConfig("memory.citations", "auto");
@@ -882,7 +886,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         extra += await configureChannel("telegram", {
           enabled: true,
           dmPolicy: "pairing",
-          botToken: telegramToken || secretRef("telegram", "TELEGRAM_BOT_TOKEN"),
+          ...(telegramToken ? { botToken: telegramToken } : {}),
           groupPolicy: "open",
           streaming: { mode: "partial" },
         });
