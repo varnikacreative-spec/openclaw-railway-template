@@ -24,6 +24,25 @@ const SETUP_PASSWORD = process.env.SETUP_PASSWORD?.trim();
 const LOG_FILE = path.join(STATE_DIR, "server.log");
 const LOG_RING_BUFFER_MAX = 1000;
 const MAX_LOG_FILE_SIZE = 5 * 1024 * 1024;
+const VAULT_MAX_FILE_BYTES = 1024 * 1024;
+const VAULT_MAX_ITEMS = 2000;
+const VAULT_TEXT_EXTENSIONS = new Set([
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".jsx",
+  ".log",
+  ".md",
+  ".mjs",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".yaml",
+  ".yml",
+]);
 const logRingBuffer = [];
 const sseClients = new Set();
 
@@ -187,6 +206,88 @@ function isConfigured() {
   } catch {
     return false;
   }
+}
+
+function resolveVaultPath(relativePath = "") {
+  const root = path.resolve(WORKSPACE_DIR);
+  const cleanRelativePath = String(relativePath || "").replace(/^\/+/, "");
+  const pathParts = cleanRelativePath.split(/[\\/]+/).filter(Boolean);
+  if (pathParts.some((part) => shouldHideVaultEntry(part))) {
+    throw new Error("Hidden vault files are not available in the web viewer.");
+  }
+  const target = path.resolve(root, cleanRelativePath);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error("Path is outside the vault.");
+  }
+  return { root, target, relativePath: path.relative(root, target) };
+}
+
+function shouldHideVaultEntry(name) {
+  return name === ".DS_Store" || name.startsWith(".");
+}
+
+function buildVaultTree() {
+  const { root } = resolveVaultPath("");
+  const items = [];
+  let truncated = false;
+
+  function walk(currentPath, depth) {
+    if (items.length >= VAULT_MAX_ITEMS) {
+      truncated = true;
+      return;
+    }
+
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    entries
+      .filter((entry) => !shouldHideVaultEntry(entry.name))
+      .sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) {
+          return a.isDirectory() ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      })
+      .forEach((entry) => {
+        if (items.length >= VAULT_MAX_ITEMS) {
+          truncated = true;
+          return;
+        }
+
+        const absolutePath = path.join(currentPath, entry.name);
+        const relativePath = path.relative(root, absolutePath);
+        if (entry.isSymbolicLink()) return;
+
+        if (entry.isDirectory()) {
+          items.push({ type: "directory", path: relativePath, name: entry.name, depth });
+          if (depth < 12) walk(absolutePath, depth + 1);
+          return;
+        }
+
+        if (!entry.isFile()) return;
+
+        let size = 0;
+        try {
+          size = fs.statSync(absolutePath).size;
+        } catch {}
+        const ext = path.extname(entry.name).toLowerCase();
+        items.push({
+          type: "file",
+          path: relativePath,
+          name: entry.name,
+          depth,
+          size,
+          readable: VAULT_TEXT_EXTENSIONS.has(ext) && size <= VAULT_MAX_FILE_BYTES,
+        });
+      });
+  }
+
+  if (fs.existsSync(root)) walk(root, 0);
+  return { root: WORKSPACE_DIR, items, truncated };
 }
 
 async function syncAllowedOrigins() {
@@ -986,6 +1087,55 @@ app.get("/setup/api/workspace", requireSetupAuth, async (_req, res) => {
       workspaceDir: WORKSPACE_DIR,
       error: err.message,
     });
+  }
+});
+
+app.get("/vault", requireSetupAuth, (_req, res) => {
+  res.sendFile(path.join(process.cwd(), "src", "public", "vault.html"));
+});
+
+app.get("/setup/api/vault/tree", requireSetupAuth, async (_req, res) => {
+  try {
+    fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+    return res.json({ ok: true, ...buildVaultTree() });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/setup/api/vault/file", requireSetupAuth, async (req, res) => {
+  try {
+    const { relativePath, target } = resolveVaultPath(req.query.path || "");
+    if (!relativePath) {
+      return res.status(400).json({ ok: false, error: "Missing file path." });
+    }
+
+    const stat = fs.lstatSync(target);
+    if (!stat.isFile()) {
+      return res.status(400).json({ ok: false, error: "Path is not a file." });
+    }
+    if (stat.size > VAULT_MAX_FILE_BYTES) {
+      return res.status(413).json({
+        ok: false,
+        error: `File is too large to preview (${stat.size} bytes).`,
+      });
+    }
+
+    const ext = path.extname(target).toLowerCase();
+    if (!VAULT_TEXT_EXTENSIONS.has(ext)) {
+      return res.status(415).json({ ok: false, error: "Only text vault files can be previewed." });
+    }
+
+    const content = fs.readFileSync(target, "utf8");
+    return res.json({
+      ok: true,
+      path: relativePath,
+      size: stat.size,
+      content,
+    });
+  } catch (err) {
+    const status = err.code === "ENOENT" ? 404 : 400;
+    return res.status(status).json({ ok: false, error: err.message });
   }
 });
 
