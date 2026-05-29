@@ -700,7 +700,7 @@ async function configureOdinDefaults({ payload } = {}) {
     ],
     memoryFlush: {
       enabled: true,
-      model: "anthropic/claude-sonnet-4-6",
+      model: "openai/gpt-5.4-mini",
       softThresholdTokens: 40000,
       forceFlushTranscriptBytes: "2mb",
       systemPrompt: [
@@ -715,12 +715,12 @@ async function configureOdinDefaults({ payload } = {}) {
     maxActiveTranscriptBytes: "20mb",
   }, { json: true });
   await setConfig("agents.defaults.model", {
-    primary: "anthropic/claude-opus-4-7",
+    primary: "openai/gpt-5.4-mini",
     fallbacks: [
-      "anthropic/claude-sonnet-4-6",
-      "openai/gpt-5.5",
       "openai/gpt-5.4",
-      "openai/gpt-5.4-mini",
+      "openai/gpt-5.5",
+      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-opus-4-7",
     ],
   }, { json: true });
   await setConfig("agents.defaults.models", {
