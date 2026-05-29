@@ -9,6 +9,8 @@ import httpProxy from "http-proxy";
 import pty from "node-pty";
 import { WebSocketServer } from "ws";
 
+import { ensureOdinWorkspace, odinWorkspaceStatus } from "./odinWorkspace.js";
+
 const PORT = Number.parseInt(process.env.PORT ?? "8080", 10);
 const STATE_DIR =
   process.env.OPENCLAW_STATE_DIR?.trim() ||
@@ -133,11 +135,46 @@ function clawArgs(args) {
   return [OPENCLAW_ENTRY, ...args];
 }
 
+function secretRef(provider, id) {
+  return { source: "env", provider, id };
+}
+
+function redactSensitiveOutput(value, extraSecrets = []) {
+  let output = String(value ?? "");
+  const secrets = [
+    OPENCLAW_GATEWAY_TOKEN,
+    SETUP_PASSWORD,
+    process.env.OPENAI_API_KEY,
+    process.env.ANTHROPIC_API_KEY,
+    process.env.SLACK_BOT_TOKEN,
+    process.env.SLACK_APP_TOKEN,
+    process.env.TELEGRAM_BOT_TOKEN,
+    ...extraSecrets,
+  ]
+    .map((secret) => (typeof secret === "string" ? secret.trim() : ""))
+    .filter((secret) => secret.length >= 8);
+
+  for (const secret of secrets) {
+    output = output.split(secret).join("[REDACTED]");
+  }
+
+  return output
+    .replace(/sk-proj-[A-Za-z0-9_-]+/g, "[REDACTED_OPENAI_KEY]")
+    .replace(/sk-admin-[A-Za-z0-9_-]+/g, "[REDACTED_OPENAI_KEY]")
+    .replace(/sk-ant-api[0-9A-Za-z_-]+/g, "[REDACTED_ANTHROPIC_KEY]")
+    .replace(/xox[baprs]-[A-Za-z0-9-]+/g, "[REDACTED_SLACK_TOKEN]")
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, "[REDACTED_TELEGRAM_TOKEN]");
+}
+
 function configPath() {
   return (
     process.env.OPENCLAW_CONFIG_PATH?.trim() ||
     path.join(STATE_DIR, "openclaw.json")
   );
+}
+
+function bootstrapOdinWorkspace() {
+  return ensureOdinWorkspace({ workspaceDir: WORKSPACE_DIR, log });
 }
 
 function isConfigured() {
@@ -214,6 +251,7 @@ async function startGateway() {
 
   fs.mkdirSync(STATE_DIR, { recursive: true });
   fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+  bootstrapOdinWorkspace();
 
   const stopResult = await runCmd(OPENCLAW_NODE, clawArgs(["gateway", "stop"]));
   log.info("gateway", `stop existing gateway exit=${stopResult.code}`);
@@ -543,6 +581,7 @@ function buildOnboardArgs(payload) {
     "token",
     "--gateway-token",
     OPENCLAW_GATEWAY_TOKEN,
+    "--suppress-gateway-token-output",
     "--flow",
     "quickstart",
   ];
@@ -552,22 +591,24 @@ function buildOnboardArgs(payload) {
 
     const secret = (payload.authSecret || "").trim();
     const map = {
-      "openai-api-key": "--openai-api-key",
-      apiKey: "--anthropic-api-key",
-      "openrouter-api-key": "--openrouter-api-key",
-      "ai-gateway-api-key": "--ai-gateway-api-key",
-      "moonshot-api-key": "--moonshot-api-key",
-      "kimi-code-api-key": "--kimi-code-api-key",
-      "gemini-api-key": "--gemini-api-key",
-      "zai-api-key": "--zai-api-key",
-      "minimax-api": "--minimax-api-key",
-      "minimax-api-lightning": "--minimax-api-key",
-      "synthetic-api-key": "--synthetic-api-key",
-      "opencode-zen": "--opencode-zen-api-key",
+      "openai-api-key": { flag: "--openai-api-key", envVar: "OPENAI_API_KEY" },
+      apiKey: { flag: "--anthropic-api-key", envVar: "ANTHROPIC_API_KEY" },
+      "openrouter-api-key": { flag: "--openrouter-api-key", envVar: "OPENROUTER_API_KEY" },
+      "ai-gateway-api-key": { flag: "--ai-gateway-api-key", envVar: "AI_GATEWAY_API_KEY" },
+      "moonshot-api-key": { flag: "--moonshot-api-key", envVar: "MOONSHOT_API_KEY" },
+      "kimi-code-api-key": { flag: "--kimi-code-api-key", envVar: "KIMI_CODE_API_KEY" },
+      "gemini-api-key": { flag: "--gemini-api-key", envVar: "GEMINI_API_KEY" },
+      "zai-api-key": { flag: "--zai-api-key", envVar: "ZAI_API_KEY" },
+      "minimax-api": { flag: "--minimax-api-key", envVar: "MINIMAX_API_KEY" },
+      "minimax-api-lightning": { flag: "--minimax-api-key", envVar: "MINIMAX_API_KEY" },
+      "synthetic-api-key": { flag: "--synthetic-api-key", envVar: "SYNTHETIC_API_KEY" },
+      "opencode-zen": { flag: "--opencode-zen-api-key", envVar: "OPENCODE_ZEN_API_KEY" },
     };
-    const flag = map[payload.authChoice];
-    if (flag && secret) {
-      args.push(flag, secret);
+    const entry = map[payload.authChoice];
+    if (entry?.flag && secret) {
+      args.push(entry.flag, secret);
+    } else if (entry?.envVar && process.env[entry.envVar]?.trim()) {
+      args.push("--secret-input-mode", "ref");
     }
 
   }
@@ -597,6 +638,105 @@ function runCmd(cmd, args, opts = {}) {
 
     proc.on("close", (code) => resolve({ code: code ?? 0, output: out }));
   });
+}
+
+async function configureOdinDefaults({ payload } = {}) {
+  const lines = [];
+  async function setConfig(pathKey, value, opts = {}) {
+    const args = ["config", "set"];
+    if (opts.json) args.push("--json");
+    args.push(pathKey, opts.json ? JSON.stringify(value) : String(value));
+    const result = await runCmd(OPENCLAW_NODE, clawArgs(args));
+    lines.push(`[config] ${pathKey} exit=${result.code}`);
+    if (result.output?.trim()) {
+      lines.push(redactSensitiveOutput(result.output, [
+        payload?.authSecret,
+        payload?.telegramToken,
+        payload?.discordToken,
+        payload?.slackBotToken,
+        payload?.slackAppToken,
+      ]).trim());
+    }
+    return result;
+  }
+
+  await setConfig("agents.defaults.workspace", WORKSPACE_DIR);
+  await setConfig("agents.defaults.contextInjection", "always");
+  await setConfig("agents.defaults.userTimezone", "Australia/Sydney");
+  await setConfig("agents.defaults.startupContext", {
+    enabled: true,
+    applyOn: ["new", "reset"],
+    dailyMemoryDays: 14,
+    maxFileBytes: 65536,
+    maxFileChars: 8000,
+    maxTotalChars: 24000,
+  }, { json: true });
+  await setConfig("agents.defaults.memorySearch", {
+    enabled: true,
+    sources: ["memory"],
+    sync: {
+      onSessionStart: true,
+      onSearch: true,
+      watch: true,
+    },
+  }, { json: true });
+  await setConfig("agents.defaults.contextLimits", {
+    memoryGetMaxChars: 120000,
+    memoryGetDefaultLines: 2000,
+    postCompactionMaxChars: 50000,
+  }, { json: true });
+  await setConfig("agents.defaults.compaction", {
+    mode: "safeguard",
+    postIndexSync: "await",
+    postCompactionSections: [
+      "Session Startup",
+      "Obsidian Is The Brain",
+      "Persistent Memory Triggers",
+      "Red Lines",
+    ],
+    memoryFlush: {
+      enabled: true,
+      model: "anthropic/claude-sonnet-4.6",
+      softThresholdTokens: 40000,
+      forceFlushTranscriptBytes: "2mb",
+      systemPrompt: [
+        "You are Odin's durable memory extraction pass.",
+        "Persist only stable, useful facts that Andrew would expect Odin to remember.",
+        "Do not persist secrets or unconfirmed sensitive personal information.",
+        "Prefer MEMORY.md for stable facts and memory/YYYY-MM-DD.md for dated working notes.",
+        "Do not claim success unless the file write succeeds.",
+      ].join("\\n"),
+    },
+    truncateAfterCompaction: true,
+    maxActiveTranscriptBytes: "20mb",
+  }, { json: true });
+  await setConfig("agents.defaults.model", {
+    primary: "anthropic/claude-opus-4.7",
+    fallbacks: [
+      "anthropic/claude-sonnet-4.6",
+      "openai/gpt-5.5",
+      "openai/gpt-5.4",
+      "openai/gpt-5.4-mini",
+    ],
+  }, { json: true });
+  await setConfig("agents.defaults.models", {
+    "anthropic/claude-opus-4.7": {},
+    "anthropic/claude-sonnet-4.6": {},
+    "openai/gpt-5.5": {},
+    "openai/gpt-5.4": {},
+    "openai/gpt-5.4-mini": {},
+  }, { json: true });
+  await setConfig("models.providers.openai", {
+    apiKey: secretRef("openai", "OPENAI_API_KEY"),
+  }, { json: true });
+  await setConfig("models.providers.anthropic", {
+    api: "anthropic-messages",
+    apiKey: secretRef("anthropic", "ANTHROPIC_API_KEY"),
+  }, { json: true });
+  await setConfig("memory.backend", "builtin");
+  await setConfig("memory.citations", "auto");
+
+  return `${lines.join("\n")}\n`;
 }
 
 const VALID_AUTH_CHOICES = [
@@ -650,6 +790,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 
     fs.mkdirSync(STATE_DIR, { recursive: true });
     fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
+    const bootstrap = bootstrapOdinWorkspace();
 
     const payload = req.body || {};
     const validationError = validatePayload(payload);
@@ -660,11 +801,15 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
     const onboard = await runCmd(OPENCLAW_NODE, clawArgs(onboardArgs));
 
     let extra = "";
+    extra += `\n[setup] Odin workspace bootstrap files=${bootstrap.results.length}\n`;
     extra += `\n[setup] Onboarding exit=${onboard.code} configured=${isConfigured()}\n`;
 
     const ok = onboard.code === 0 && isConfigured();
 
     if (ok) {
+      extra += "\n[setup] Configuring Odin brain and model defaults...\n";
+      extra += await configureOdinDefaults({ payload });
+
       extra += "\n[setup] Configuring gateway settings...\n";
 
       const allowInsecureResult = await runCmd(
@@ -731,13 +876,15 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
         );
       }
 
-      if (payload.telegramToken?.trim()) {
+      const telegramToken = payload.telegramToken?.trim();
+      const telegramEnvToken = process.env.TELEGRAM_BOT_TOKEN?.trim();
+      if (telegramToken || telegramEnvToken) {
         extra += await configureChannel("telegram", {
           enabled: true,
           dmPolicy: "pairing",
-          botToken: payload.telegramToken.trim(),
+          botToken: telegramToken || secretRef("telegram", "TELEGRAM_BOT_TOKEN"),
           groupPolicy: "open",
-          streamMode: "partial",
+          streaming: { mode: "partial" },
         });
       }
 
@@ -753,6 +900,7 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
       if (payload.slackBotToken?.trim() || payload.slackAppToken?.trim()) {
         extra += await configureChannel("slack", {
           enabled: true,
+          mode: "socket",
           botToken: payload.slackBotToken?.trim() || undefined,
           appToken: payload.slackAppToken?.trim() || undefined,
         });
@@ -765,7 +913,13 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
 
     return res.status(ok ? 200 : 500).json({
       ok,
-      output: `${onboard.output}${extra}`,
+      output: redactSensitiveOutput(`${onboard.output}${extra}`, [
+        req.body?.authSecret,
+        req.body?.telegramToken,
+        req.body?.discordToken,
+        req.body?.slackBotToken,
+        req.body?.slackAppToken,
+      ]),
     });
   } catch (err) {
     log.error("setup", `run error: ${String(err)}`);
@@ -801,6 +955,34 @@ app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
       channelsAddHelpIncludesTelegram: help.output.includes("telegram"),
     },
   });
+});
+
+app.get("/setup/api/workspace", requireSetupAuth, async (_req, res) => {
+  try {
+    const bootstrap = bootstrapOdinWorkspace();
+    const status = odinWorkspaceStatus(WORKSPACE_DIR);
+    const writeTestPath = path.join(WORKSPACE_DIR, "operations", ".odin-write-test");
+    fs.mkdirSync(path.dirname(writeTestPath), { recursive: true });
+    fs.writeFileSync(writeTestPath, `${new Date().toISOString()}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    const writeBack = fs.readFileSync(writeTestPath, "utf8").trim();
+
+    return res.json({
+      ok: true,
+      workspaceDir: WORKSPACE_DIR,
+      writeOk: Boolean(writeBack),
+      bootstrap,
+      status,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      workspaceDir: WORKSPACE_DIR,
+      error: err.message,
+    });
+  }
 });
 
 app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
@@ -1188,6 +1370,11 @@ const server = app.listen(PORT, () => {
   log.info("wrapper", `setup wizard: http://localhost:${PORT}/setup`);
   log.info("wrapper", `web TUI: ${ENABLE_WEB_TUI ? "enabled" : "disabled"}`);
   log.info("wrapper", `configured: ${isConfigured()}`);
+  try {
+    bootstrapOdinWorkspace();
+  } catch (err) {
+    log.warn("odin", `workspace bootstrap failed: ${err.message}`);
+  }
 
   if (isConfigured()) {
     (async () => {
