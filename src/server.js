@@ -720,11 +720,11 @@ async function configureOdinDefaults({ payload } = {}) {
     ],
   }, { json: true });
   await setConfig("agents.defaults.models", {
-    "anthropic/claude-opus-4.7": {},
-    "anthropic/claude-sonnet-4.6": {},
-    "openai/gpt-5.5": {},
-    "openai/gpt-5.4": {},
     "openai/gpt-5.4-mini": {},
+    "openai/gpt-5.4": {},
+    "openai/gpt-5.5": {},
+    "anthropic/claude-sonnet-4.6": {},
+    "anthropic/claude-opus-4.7": {},
   }, { json: true });
   await setConfig("models.providers.openai", {
     apiKey: secretRef("openai", "OPENAI_API_KEY"),

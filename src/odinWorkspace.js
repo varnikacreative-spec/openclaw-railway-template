@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const ODIN_MARKER = "<!-- ODIN-BOOTSTRAP:v2 -->";
+const ODIN_MARKER = "<!-- ODIN-BOOTSTRAP:v3 -->";
+const ODIN_MARKER_RE = /<!-- ODIN-BOOTSTRAP:v\d+ -->/g;
 
 const CORE_FILES = [
   {
@@ -175,14 +176,14 @@ Obsidian vault at:
 
 Primary:
 
-- anthropic/claude-opus-4.7
+- openai/gpt-5.4-mini
 
 Fallbacks:
 
-- anthropic/claude-sonnet-4.6
-- openai/gpt-5.5
 - openai/gpt-5.4
-- openai/gpt-5.4-mini
+- openai/gpt-5.5
+- anthropic/claude-sonnet-4.6
+- anthropic/claude-opus-4.7
 
 ## Identity Statement
 
@@ -217,6 +218,7 @@ Andrew wants a working OpenClaw V2 agent named Odin that:
 - Uses an Obsidian vault as the durable brain.
 - Starts with real operating files rather than empty placeholder memory.
 - Can persist and recall important facts across restarts.
+- Uses ChatGPT 5.4 mini as the default model.
 
 ## Working Preferences
 
@@ -327,6 +329,7 @@ This is Odin's top-level persistent memory index. It is intentionally human-read
 - Odin's durable Obsidian vault path is /data/workspace.
 - Telegram is the first active channel for Odin.
 - Slack support is deferred until Andrew chooses to finish it.
+- Odin's default model is openai/gpt-5.4-mini, which represents ChatGPT 5.4 mini.
 - The first safe recall test is the canary in memory/CANARY.md.
 
 ## Canary
@@ -567,6 +570,7 @@ ${ODIN_MARKER}
 - The durable brain is the Obsidian vault at /data/workspace.
 - Telegram is the first live channel target.
 - Slack is deferred for now.
+- ChatGPT 5.4 mini is the required default model.
 - The first verification should use harmless canary memory, not private personal data.
 
 ## Persistent Memory Requirement
@@ -673,7 +677,67 @@ const OBSIDIAN_FILES = [
   },
 ];
 
-function appendIfMissing(filePath, content) {
+const DEFAULT_MODEL_PLAN = `## Default Model Plan
+
+Primary:
+
+- openai/gpt-5.4-mini
+
+Fallbacks:
+
+- openai/gpt-5.4
+- openai/gpt-5.5
+- anthropic/claude-sonnet-4.6
+- anthropic/claude-opus-4.7
+`;
+
+const USER_DEFAULT_MODEL_LINE = "- Uses ChatGPT 5.4 mini as the default model.";
+const MEMORY_DEFAULT_MODEL_LINE =
+  "- Odin's default model is openai/gpt-5.4-mini, which represents ChatGPT 5.4 mini.";
+const DAILY_DEFAULT_MODEL_LINE =
+  "- ChatGPT 5.4 mini is the required default model.";
+
+function normalizeOdinBootstrap(file, text) {
+  let next = text.replace(ODIN_MARKER_RE, ODIN_MARKER);
+
+  if (file === "IDENTITY.md") {
+    const modelPlanRe =
+      /## Default Model Plan\n[\s\S]*?(?=\n## Identity Statement\n)/;
+    if (modelPlanRe.test(next)) {
+      next = next.replace(modelPlanRe, DEFAULT_MODEL_PLAN);
+    } else if (!next.includes("openai/gpt-5.4-mini")) {
+      next += `\n\n${DEFAULT_MODEL_PLAN}`;
+    }
+  }
+
+  if (file === "USER.md" && !next.includes(USER_DEFAULT_MODEL_LINE)) {
+    next = next.replace(
+      "- Can persist and recall important facts across restarts.\n",
+      `- Can persist and recall important facts across restarts.\n${USER_DEFAULT_MODEL_LINE}\n`,
+    );
+  }
+
+  if (file === "MEMORY.md" && !next.includes(MEMORY_DEFAULT_MODEL_LINE)) {
+    next = next.replace(
+      "- Slack support is deferred until Andrew chooses to finish it.\n",
+      `- Slack support is deferred until Andrew chooses to finish it.\n${MEMORY_DEFAULT_MODEL_LINE}\n`,
+    );
+  }
+
+  if (
+    file === path.join("memory", "2026-05-29.md") &&
+    !next.includes(DAILY_DEFAULT_MODEL_LINE)
+  ) {
+    next = next.replace(
+      "- Slack is deferred for now.\n",
+      `- Slack is deferred for now.\n${DAILY_DEFAULT_MODEL_LINE}\n`,
+    );
+  }
+
+  return next;
+}
+
+function appendIfMissing(filePath, content, file) {
   const existing = fs.existsSync(filePath)
     ? fs.readFileSync(filePath, "utf8")
     : "";
@@ -681,6 +745,13 @@ function appendIfMissing(filePath, content) {
     fs.writeFileSync(filePath, content, { encoding: "utf8", mode: 0o644 });
     return "created";
   }
+
+  const migrated = normalizeOdinBootstrap(file, existing);
+  if (migrated !== existing) {
+    fs.writeFileSync(filePath, migrated, { encoding: "utf8", mode: 0o644 });
+    return "updated";
+  }
+
   if (existing.includes(ODIN_MARKER)) return "exists";
   fs.appendFileSync(filePath, `\n\n---\n\n${content}`, { encoding: "utf8" });
   return "updated";
@@ -701,7 +772,7 @@ export function ensureOdinWorkspace({ workspaceDir, log } = {}) {
   for (const entry of CORE_FILES) {
     const filePath = path.join(workspaceDir, entry.file);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const status = appendIfMissing(filePath, entry.body);
+    const status = appendIfMissing(filePath, entry.body, entry.file);
     results.push({ file: entry.file, status });
   }
 
