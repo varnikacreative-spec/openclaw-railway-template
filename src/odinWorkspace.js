@@ -176,14 +176,14 @@ Obsidian vault at:
 
 Primary:
 
-- openai/gpt-5.4-mini
+- anthropic/claude-opus-4.7
 
 Fallbacks:
 
-- openai/gpt-5.4
-- openai/gpt-5.5
 - anthropic/claude-sonnet-4.6
-- anthropic/claude-opus-4.7
+- openai/gpt-5.5
+- openai/gpt-5.4
+- openai/gpt-5.4-mini
 
 ## Identity Statement
 
@@ -218,7 +218,7 @@ Andrew wants a working OpenClaw V2 agent named Odin that:
 - Uses an Obsidian vault as the durable brain.
 - Starts with real operating files rather than empty placeholder memory.
 - Can persist and recall important facts across restarts.
-- Uses ChatGPT 5.4 mini as the default model.
+- Uses Claude Opus 4.7 as the default model with Sonnet 4.6, GPT-5.5, GPT-5.4, and GPT-5.4 mini fallbacks.
 
 ## Working Preferences
 
@@ -329,7 +329,7 @@ This is Odin's top-level persistent memory index. It is intentionally human-read
 - Odin's durable Obsidian vault path is /data/workspace.
 - Telegram is the first active channel for Odin.
 - Slack support is deferred until Andrew chooses to finish it.
-- Odin's default model is openai/gpt-5.4-mini, which represents ChatGPT 5.4 mini.
+- Odin's default model is anthropic/claude-opus-4.7, with Sonnet 4.6 and GPT-5.x fallbacks.
 - The first safe recall test is the canary in memory/CANARY.md.
 
 ## Canary
@@ -570,7 +570,7 @@ ${ODIN_MARKER}
 - The durable brain is the Obsidian vault at /data/workspace.
 - Telegram is the first live channel target.
 - Slack is deferred for now.
-- ChatGPT 5.4 mini is the required default model.
+- Claude Opus 4.7 is the required default model, with Sonnet and OpenAI fallbacks.
 - The first verification should use harmless canary memory, not private personal data.
 
 ## Persistent Memory Requirement
@@ -681,31 +681,45 @@ const DEFAULT_MODEL_PLAN = `## Default Model Plan
 
 Primary:
 
-- openai/gpt-5.4-mini
+- anthropic/claude-opus-4.7
 
 Fallbacks:
 
-- openai/gpt-5.4
-- openai/gpt-5.5
 - anthropic/claude-sonnet-4.6
-- anthropic/claude-opus-4.7
+- openai/gpt-5.5
+- openai/gpt-5.4
+- openai/gpt-5.4-mini
 `;
 
-const USER_DEFAULT_MODEL_LINE = "- Uses ChatGPT 5.4 mini as the default model.";
+const USER_DEFAULT_MODEL_LINE =
+  "- Uses Claude Opus 4.7 as the default model with Sonnet 4.6, GPT-5.5, GPT-5.4, and GPT-5.4 mini fallbacks.";
 const MEMORY_DEFAULT_MODEL_LINE =
-  "- Odin's default model is openai/gpt-5.4-mini, which represents ChatGPT 5.4 mini.";
+  "- Odin's default model is anthropic/claude-opus-4.7, with Sonnet 4.6 and GPT-5.x fallbacks.";
 const DAILY_DEFAULT_MODEL_LINE =
-  "- ChatGPT 5.4 mini is the required default model.";
+  "- Claude Opus 4.7 is the required default model, with Sonnet and OpenAI fallbacks.";
 
 function normalizeOdinBootstrap(file, text) {
   let next = text.replace(ODIN_MARKER_RE, ODIN_MARKER);
+  next = next
+    .replaceAll(
+      "- Uses ChatGPT 5.4 mini as the default model.",
+      USER_DEFAULT_MODEL_LINE,
+    )
+    .replaceAll(
+      "- Odin's default model is openai/gpt-5.4-mini, which represents ChatGPT 5.4 mini.",
+      MEMORY_DEFAULT_MODEL_LINE,
+    )
+    .replaceAll(
+      "- ChatGPT 5.4 mini is the required default model.",
+      DAILY_DEFAULT_MODEL_LINE,
+    );
 
   if (file === "IDENTITY.md") {
     const modelPlanRe =
       /## Default Model Plan\n[\s\S]*?(?=\n## Identity Statement\n)/;
     if (modelPlanRe.test(next)) {
       next = next.replace(modelPlanRe, DEFAULT_MODEL_PLAN);
-    } else if (!next.includes("openai/gpt-5.4-mini")) {
+    } else if (!next.includes("## Default Model Plan")) {
       next += `\n\n${DEFAULT_MODEL_PLAN}`;
     }
   }
